@@ -1,0 +1,174 @@
+create or replace view default.cec_overview_1 as
+select
+    eu.name as Agent_Name,
+    cast(ec.time_period__c as Date) as Date,
+    count(ec.Id) as Cases,
+    sum(CASE WHEN ec.contact_qualification__c = 'Dissatisfied' THEN 1 ELSE 0 END) as DSAT_Cases,
+    sum(CASE WHEN ec.contact_qualification__c = 'Satisfied' THEN 1 ELSE 0 END) as SAT_Cases,
+    sum(CASE WHEN ec.contact_qualification__c = 'Neutral' THEN 1 ELSE 0 END) as NEU_Cases,
+    sum(CASE WHEN ec.contact_qualification__c is NULL THEN 1 ELSE 0 END) as NULL_Cases
+from engage.case ec
+join engage.user eu on eu.id = ec.lastmodifiedbyid
+where 
+    year(ec.time_period__c) >= '2022'
+    and ec.contact_way_autocomplete__c not in ('System','System Update')
+    and eu.name not in ('System','Data Migration User')
+    and ec.status not in ('Reject')
+group by 
+    cast(ec.time_period__c as Date),
+    eu.name
+;
+create or replace view default.cec_quits_1 as
+select
+    eu.name as Agent_name,
+    cast(ec.time_period__c as Date) as Date,
+    count(hybris_account_number__c) as Quit_Cases
+from engage.case ec
+join engage.user eu on eu.id = ec.lastmodifiedbyid
+where (ec.contact_resolution__c ='Request Quit' or ec.quit_or_save__c = 'Quit')
+    and year(ec.time_period__c) >= '2022'
+    and ec.contact_way_autocomplete__c not in ('System','System Update')
+group by
+    cast(ec.time_period__c as Date),
+    eu.name
+;
+create or replace view default.cec_saves_1 as
+select
+    eu.name as Agent_Name,
+    cast(ec.time_period__c as Date) as Date,
+    count(hybris_account_number__c) as Save_Cases
+from engage.case ec
+join engage.user eu on eu.id = ec.lastmodifiedbyid
+where ec.quit_or_save__c = 'Save'
+    and year(ec.time_period__c) >= '2022'
+    and ec.contact_way_autocomplete__c not in ('System','System Update')
+group by
+    cast(ec.time_period__c as Date),
+    eu.name
+;
+create or replace view default.cec_escalations_1 as 
+select
+    eu.name as Agent_Name,
+    cast(ec.time_period__c as Date) as Date,
+    count(ec.id) as Escalations,
+    cr.name as contact_reason,
+    cres.name as contact_resolution,
+    SUBSTRING(ec.Case_Owner_Formula__c,instr(ec.Case_Owner_Formula__c,'>')+1,length(ec.Case_Owner_Formula__c)-instr(ec.Case_Owner_Formula__c,'>')-4) as Case_Owner
+    
+from engage.case ec
+join engage.user eu on ec.createdbyid = eu.id
+join default.cec_team_listing ct on SUBSTRING(ec.Case_Owner_Formula__c,instr(ec.Case_Owner_Formula__c,'>')+1,length(ec.Case_Owner_Formula__c)-instr(ec.Case_Owner_Formula__c,'>')-4) = ct.agent_name
+join engage.contact_reason cr on cr.id = ec.contact_reason_global__c
+join engage.contact_resolution cres on cres.id = ec.contact_resolution__c 
+where contact_way_autocomplete__c in ('Telephone','Telephone Inbound (CEC)','Telephone Inbound (CSC)','Email','Chat','Website')
+and eu.name <> SUBSTRING(ec.Case_Owner_Formula__c,instr(ec.Case_Owner_Formula__c,'>')+1,length(ec.Case_Owner_Formula__c)-instr(ec.Case_Owner_Formula__c,'>')-4)
+and ct.department ='Escalation'
+and cr.name not in ('Quality','Retail Waters')
+group by eu.name,ec.time_period__c,cr.name,cres.name,ec.case_owner_formula__c
+
+UNION ALL
+
+select
+    eu.name as Agent_Name,
+    cast(ec.time_period__c as Date) as Date,
+    count(ec.id) as Escalations,
+    cr.name as contact_reason,
+    cres.name as contact_resolution,
+    SUBSTRING(ec.Case_Owner_Formula__c,instr(ec.Case_Owner_Formula__c,'>')+1,length(ec.Case_Owner_Formula__c)-instr(ec.Case_Owner_Formula__c,'>')-4) as Case_Owner
+
+from engage.case ec
+join engage.user eu on ec.createdbyid = eu.id
+join engage.contact_reason cr on cr.id = ec.contact_reason_global__c
+join engage.contact_resolution cres on cres.id = ec.contact_resolution__c 
+where contact_way_autocomplete__c in ('Telephone','Telephone Inbound (CEC)','Telephone Inbound (CSC)','Email','Chat','Website')
+and SUBSTRING(ec.Case_Owner_Formula__c,instr(ec.Case_Owner_Formula__c,'>')+1,length(ec.Case_Owner_Formula__c)-instr(ec.Case_Owner_Formula__c,'>')-4) = 'Phone Escalations - Customer Experience'
+and cr.name not in ('Quality','Retail Waters')
+group by eu.name,ec.time_period__c,cr.name,cres.name,ec.case_owner_formula__c
+;
+create or replace view default.first_call_resolution_1 as 
+select
+    eu.name as Agent_Name,
+    cast(ec.time_period__c as Date) as Date,
+    count(distinct ec.hybris_account_number__c) as Call_Backs
+from engage.case ec
+join engage.case ec2 on ec.hybris_account_number__c = ec2.hybris_account_number__c
+join engage.user eu on ec.createdbyid = eu.id
+
+where ec.contact_way_autocomplete__c in ('Telephone','Telephone Inbound (CEC)','Telephone Inbound (CSC)')
+and ec2.contact_way_autocomplete__c in ('Telephone','Telephone Inbound (CEC)','Telephone Inbound (CSC)','Website','Email')
+and SUBSTRING(ec.Case_Owner_Formula__c,instr(ec.Case_Owner_Formula__c,'>')+1,length(ec.Case_Owner_Formula__c)-instr(ec.Case_Owner_Formula__c,'>')-4) not in ('Rejected Cases','System Update')
+and SUBSTRING(ec2.Case_Owner_Formula__c,instr(ec2.Case_Owner_Formula__c,'>')+1,length(ec2.Case_Owner_Formula__c)-instr(ec2.Case_Owner_Formula__c,'>')-4) not in ('Rejected Cases','System Update')
+and ec.contact_reason_autocomplete__c not in ('Acquisition','Lead - Sellable')
+and ec.subject not in ('BDWO')
+and ec2.subject not in ('BDWO')
+and year(ec.time_period__c) >= '2022'
+and unix_timestamp(ec2.time_period__c) - unix_timestamp(ec.time_period__c) between 1800 and 529200
+group by 
+    eu.name,
+    cast(ec.time_period__c as Date)
+;
+create or replace view default.cec_open_cases_1 as
+select
+    eu.name as Agent_Name,
+    count(hybris_account_number__c) as Open_Cases
+from engage.case ec
+join engage.user eu on eu.name = SUBSTRING(ec.Case_Owner_Formula__c,instr(ec.Case_Owner_Formula__c,'>')+1,length(ec.Case_Owner_Formula__c)-instr(ec.Case_Owner_Formula__c,'>')-4)
+where ec.status not in ('closed','rejected')
+    and year(ec.time_period__c) >= '2020'
+    
+group by
+    eu.name
+;
+create or replace view default.cec_acquisitions_1 as
+select
+    eu.name as Agent_Name,
+    cast(ec.time_period__c as Date) as Date,
+    sum(case when contact_reason_autocomplete__c = 'Acquisition' then 1 else 0 end) as Acquisitions,
+    count(ec.status) as Potential_Sales
+from engage.case ec
+join engage.user eu on eu.id = ec.createdbyid
+where ec.status not in ('rejected')
+    and contact_reason_autocomplete__c in ('Acquisition','Lead - Sellable','Lead - Non Sellable')
+    and year(ec.time_period__c) >= '2022'
+    
+group by
+    eu.name,cast(ec.time_period__c as Date)
+;
+create or replace view default.cec_surveys as
+select
+    eu.name as Agent_Name,
+    cast(csc.enddate as Date) as Date,
+    cast(csc.csr_rating as int) as CSR_Rating
+
+from qualtrics.t_customer_service_center csc
+join engage.user eu on eu.name = csc.csr_name
+where csr_rating is not null
+and cast(csc.enddate as Date) > '12-31-2021'
+;
+create or replace view default.CEC_Overview_Stats as
+select 
+    co.Agent_Name,
+    ct.leader,
+    ct.department,
+    co.date,
+    co.cases,
+    co.dsat_cases,
+    co.sat_cases,
+    co.neu_cases,
+    co.null_cases,
+    ifnull(cq.quit_cases,0) as Quits,
+    ifnull(cs.save_cases,0) as Saves,
+    ifnull(ce.Escalations,0) as Escalations,
+    ifnull(fcr.Call_Backs,0) as Call_Backs,
+    ifnull(oc.open_cases,0) as Open_Cases,
+    ifnull(ca.Potential_Sales,0) as Potential_Sales, 
+    ifnull(ca.Acquisitions,0) as Acquisitions
+from default.cec_overview_1 co
+left join default.cec_quits_1 as cq on cq.Agent_Name = co.Agent_Name and cq.date = co.date
+left join default.cec_saves_1 as cs on cs.Agent_Name = co.Agent_Name and cs.date = co.date
+left join default.cec_escalations_1 as ce on ce.Agent_Name = co.Agent_Name and ce.date = co.date
+left join default.first_call_resolution_1 as fcr on fcr.Agent_Name = co.Agent_Name and fcr.date = co.date
+left join default.cec_team_listing ct on ct.agent_name = co.agent_name
+left join default.cec_open_cases_1 as oc on oc.Agent_Name = co.Agent_Name
+left join default.cec_acquisitions_1 as ca on ca.Agent_Name = co.Agent_Name and ca.date = co.date
+;
